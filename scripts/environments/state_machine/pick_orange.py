@@ -1,30 +1,33 @@
-"""Script to generate data using state machine with leisaac manipulation environments."""
+"""Script to generate data using state machine with leisaac manipulation environments.
 
-"""Launch Isaac Sim Simulator first."""
-import multiprocessing
+Launch Isaac Sim Simulator first.
+"""
 
-if multiprocessing.get_start_method() != "spawn":
-    multiprocessing.set_start_method("spawn", force=True)
 import argparse
+import math
+import multiprocessing
 import os
 import time
+
+if multiprocessing.get_start_method() != 'spawn':
+    multiprocessing.set_start_method('spawn', force=True)
 
 from isaaclab.app import AppLauncher
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="leisaac data generation script for pick_orange task.")
-parser.add_argument("--num_envs", type=int, default=1)
-parser.add_argument("--task", type=str, default=None)
-parser.add_argument("--seed", type=int, default=None)
-parser.add_argument("--record", action="store_true")
-parser.add_argument("--step_hz", type=int, default=60)
-parser.add_argument("--dataset_file", type=str, default="./datasets/dataset.hdf5")
-parser.add_argument("--resume", action="store_true")
-parser.add_argument("--num_demos", type=int, default=1)
-parser.add_argument("--quality", action="store_true")
-parser.add_argument("--use_lerobot_recorder", action="store_true", help="whether to use lerobot recorder.")
-parser.add_argument("--lerobot_dataset_repo_id", type=str, default=None, help="Lerobot Dataset repository ID.")
-parser.add_argument("--lerobot_dataset_fps", type=int, default=30, help="Lerobot Dataset frames per second.")
+parser = argparse.ArgumentParser(description='leisaac data generation script for pick_orange task.')
+parser.add_argument('--num_envs', type=int, default=1)
+parser.add_argument('--task', type=str, default=None)
+parser.add_argument('--seed', type=int, default=None)
+parser.add_argument('--record', action='store_true')
+parser.add_argument('--step_hz', type=int, default=60)
+parser.add_argument('--dataset_file', type=str, default='./datasets/dataset.hdf5')
+parser.add_argument('--resume', action='store_true')
+parser.add_argument('--num_demos', type=int, default=1)
+parser.add_argument('--quality', action='store_true')
+parser.add_argument('--use_lerobot_recorder', action='store_true', help='whether to use lerobot recorder.')
+parser.add_argument('--lerobot_dataset_repo_id', type=str, default=None, help='Lerobot Dataset repository ID.')
+parser.add_argument('--lerobot_dataset_fps', type=int, default=30, help='Lerobot Dataset frames per second.')
 
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -33,26 +36,26 @@ app_launcher_args = vars(args_cli)
 app_launcher = AppLauncher(app_launcher_args)
 simulation_app = app_launcher.app
 
-import math
-
 import gymnasium as gym
 import torch
+
 from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
 from isaaclab.managers import DatasetExportMode, SceneEntityCfg, TerminationTermCfg
 from isaaclab.utils.math import quat_apply, quat_from_euler_xyz, quat_inv, quat_mul
 from isaaclab_tasks.utils import parse_env_cfg
+
 from leisaac.enhance.managers import EnhanceDatasetExportMode, StreamingRecorderManager
 from leisaac.tasks.pick_orange.mdp import task_done
 from leisaac.utils.env_utils import dynamic_reset_gripper_effort_limit_sim
-
 
 class RateLimiter:
     """Convenience class for enforcing rates in loops."""
 
     def __init__(self, hz):
-        """
+        """Initialize a RateLimiter.
+
         Args:
-            hz (int): frequency to enforce
+            hz (int): frequency to enforce.
         """
         self.hz = hz
         self.last_time = time.time()
@@ -75,11 +78,10 @@ class RateLimiter:
 
 
 def auto_terminate(env: ManagerBasedRLEnv | DirectRLEnv, success: bool):
-    """
-    Programmatically mark the current episode as success or failure.
+    """Programmatically mark the current episode as success or failure.
 
-    This is the SAME implementation used in the teleoperation script.
-    It does NOT require any human input.
+    This is the same implementation used in the teleoperation script.
+    It does not require any human input.
     """
     if hasattr(env, "termination_manager"):
         if success:
@@ -100,27 +102,20 @@ def auto_terminate(env: ManagerBasedRLEnv | DirectRLEnv, success: bool):
 
 
 def apply_triangle_offset(pos_tensor, orange_now, radius=0.1):
-    """
-    Apply an equilateral triangle offset on the x-y plane.
+    """Apply an equilateral triangle offset on the x-y plane.
 
     The offset places objects evenly around a circle, forming the vertices
     of an equilateral triangle. This is used to arrange multiple oranges
     on the plate without overlap.
 
     Args:
-        pos_tensor (torch.Tensor):
-            Position tensor of shape (num_envs, 3) in world coordinates.
-        orange_now (int):
-            Index of the current orange (1, 2, or 3).
-        radius (float, optional):
-            Distance from the center of the plate to each triangle vertex.
-            Defaults to 0.1 meters.
+        pos_tensor (torch.Tensor): Position tensor of shape (num_envs, 3) in world coordinates.
+        orange_now (int): Index of the current orange (1, 2, or 3).
+        radius (float, optional): Distance from the center of the plate to each triangle vertex. Defaults to 0.1 meters.
 
     Returns:
-        torch.Tensor:
-            The input position tensor with the triangle offset applied.
+        torch.Tensor: The input position tensor with the triangle offset applied.
     """
-
     idx = (orange_now - 1) % 3
     angle = idx * (2 * math.pi / 3)
 
@@ -134,8 +129,7 @@ def apply_triangle_offset(pos_tensor, orange_now, radius=0.1):
 
 
 def state_machine(env, step_count, target, orange_now):
-    """
-    Finite state machine for a pick-and-place task with a robot gripper.
+    """Finite state machine for a pick-and-place task with a robot gripper.
 
     This function generates low-level action commands based on the current
     simulation step. The robot approaches an orange, grasps it, lifts it,
@@ -143,27 +137,17 @@ def state_machine(env, step_count, target, orange_now):
     triangle arrangement.
 
     Args:
-        env:
-            The simulation environment instance. It is expected to provide
-            access to scene objects, device information, and number of parallel
-            environments.
-        step_count (int):
-            The current timestep of the episode, used to switch between
-            different phases of the state machine.
-        target (str):
-            The name of the target object (e.g., an orange) in the scene.
-        orange_now (int):
-            Index of the current orange being placed (1, 2, or 3). This
-            determines the triangle offset on the plate.
+        env: The simulation environment instance. It is expected to provide access to scene objects, device information, and number of parallel environments.
+        step_count (int): The current timestep of the episode, used to switch between different phases of the state machine.
+        target (str): The name of the target object (e.g., an orange) in the scene.
+        orange_now (int): Index of the current orange being placed (1, 2, or 3). This determines the triangle offset on the plate.
 
     Returns:
-        torch.Tensor:
-            Action tensor of shape (num_envs, action_dim), containing:
+        torch.Tensor: Action tensor of shape (num_envs, action_dim), containing:
             - target position in the robot base frame (x, y, z)
             - target orientation as a quaternion (x, y, z, w)
             - gripper command (open / close)
     """
-
     device = env.device
     num_envs = env.num_envs
 
@@ -246,15 +230,11 @@ MAX_STEPS = 420
 
 
 def main() -> None:
-    """
-    Run a pick-orange state machine in an Isaac Lab manipulation environment.
+    """Run a pick-orange state machine in an Isaac Lab manipulation environment.
 
     Creates the environment, initializes the pick-and-place state machine for
     picking an orange, and runs the main simulation loop until the application
     is closed.
-
-    Returns:
-        None
     """
     output_dir = os.path.dirname(args_cli.dataset_file)
     output_file_name = os.path.splitext(os.path.basename(args_cli.dataset_file))[0]
