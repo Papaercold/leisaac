@@ -84,9 +84,9 @@ class PickOrangeStateMachine(StateMachineBase):
     def get_action(self, env) -> torch.Tensor:
         """Compute the action tensor for the current step.
 
-        Reads object poses from ``env.scene`` and returns a 8-DOF action
-        tensor ``[pos_x, pos_y, pos_z, quat_x, quat_y, quat_z, quat_w, gripper]``
-        expressed in the robot base frame.
+        Reads object poses from ``env.scene``, dispatches to the appropriate
+        phase method, then converts the world-frame target position to the
+        robot base frame and assembles the full action tensor.
 
         The scene is expected to contain:
         - ``"Orange00{orange_now}"`` – the current orange rigid object
@@ -98,7 +98,9 @@ class PickOrangeStateMachine(StateMachineBase):
                 ``env.num_envs``, and ``env.scene``.
 
         Returns:
-            Action tensor of shape ``(num_envs, 8)``.
+            Action tensor of shape ``(num_envs, 8)`` with layout
+            ``[pos_x, pos_y, pos_z, quat_x, quat_y, quat_z, quat_w, gripper]``
+            expressed in the robot base frame.
         """
         device = env.device
         num_envs = env.num_envs
@@ -117,61 +119,186 @@ class PickOrangeStateMachine(StateMachineBase):
         ).repeat(num_envs, 1)
         target_quat = quat_mul(quat_inv(robot_base_quat_w), target_quat_w)
 
-        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
-
-        # --- Phase selection based on step count ---
+        # --- Phase dispatch ---
         if step < 120:
-            # Move above orange (hover)
-            target_pos_w = orange_pos_w.clone()
-            target_pos_w[:, 0] -= 0.03
-            target_pos_w[:, 2] += 0.1 + _GRIPPER_OFFSET
-            gripper_cmd[:] = _GRIPPER_OPEN
+            target_pos_w, gripper_cmd = self._phase_hover_above_orange(orange_pos_w, num_envs, device)
         elif step < 150:
-            # Lower to orange
-            target_pos_w = orange_pos_w.clone()
-            target_pos_w[:, 0] -= 0.03
-            target_pos_w[:, 2] += _GRIPPER_OFFSET
-            gripper_cmd[:] = _GRIPPER_OPEN
+            target_pos_w, gripper_cmd = self._phase_lower_to_orange(orange_pos_w, num_envs, device)
         elif step < 180:
-            # Close gripper (grasp)
-            target_pos_w = orange_pos_w.clone()
-            target_pos_w[:, 0] -= 0.03
-            target_pos_w[:, 2] += _GRIPPER_OFFSET
-            gripper_cmd[:] = _GRIPPER_CLOSE
+            target_pos_w, gripper_cmd = self._phase_grasp(orange_pos_w, num_envs, device)
         elif step < 220:
-            # Lift orange
-            target_pos_w = orange_pos_w.clone()
-            target_pos_w[:, 0] -= 0.03
-            target_pos_w[:, 2] += 0.25
-            gripper_cmd[:] = _GRIPPER_CLOSE
+            target_pos_w, gripper_cmd = self._phase_lift_orange(orange_pos_w, num_envs, device)
         elif step < 320:
-            # Move above plate
-            target_pos_w = plate_pos_w.clone()
-            target_pos_w[:, 2] += 0.25
-            gripper_cmd[:] = _GRIPPER_CLOSE
+            target_pos_w, gripper_cmd = self._phase_move_above_plate(plate_pos_w, num_envs, device)
         elif step < 350:
-            # Lower to plate
-            target_pos_w = plate_pos_w.clone()
-            target_pos_w[:, 2] += _GRIPPER_OFFSET + 0.1
-            _apply_triangle_offset(target_pos_w, self._orange_now)
-            gripper_cmd[:] = _GRIPPER_CLOSE
+            target_pos_w, gripper_cmd = self._phase_lower_to_plate(plate_pos_w, num_envs, device)
         elif step < 380:
-            # Release orange
-            target_pos_w = plate_pos_w.clone()
-            target_pos_w[:, 2] += _GRIPPER_OFFSET + 0.1
-            _apply_triangle_offset(target_pos_w, self._orange_now)
-            gripper_cmd[:] = _GRIPPER_OPEN
+            target_pos_w, gripper_cmd = self._phase_release(plate_pos_w, num_envs, device)
         else:
-            # Lift gripper clear of the plate
-            target_pos_w = plate_pos_w.clone()
-            target_pos_w[:, 2] += 0.2
-            _apply_triangle_offset(target_pos_w, self._orange_now)
-            gripper_cmd[:] = _GRIPPER_OPEN
+            target_pos_w, gripper_cmd = self._phase_lift_gripper(plate_pos_w, num_envs, device)
 
         diff_w = target_pos_w - robot_base_pos_w
         target_pos_local = quat_apply(quat_inv(robot_base_quat_w), diff_w)
 
         return torch.cat([target_pos_local, target_quat, gripper_cmd], dim=-1)
+
+    # ------------------------------------------------------------------
+    # Phase methods  (steps 0-419, one method per phase)
+    # ------------------------------------------------------------------
+
+    def _phase_hover_above_orange(
+        self, orange_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 0–119: move the gripper to a hover position above the orange.
+
+        Args:
+            orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – target world position and gripper command.
+        """
+        target_pos_w = orange_pos_w.clone()
+        target_pos_w[:, 0] -= 0.03
+        target_pos_w[:, 2] += 0.1 + _GRIPPER_OFFSET
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
+        return target_pos_w, gripper_cmd
+
+    def _phase_lower_to_orange(
+        self, orange_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 120–149: lower the gripper down to grasp height over the orange.
+
+        Args:
+            orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – target world position and gripper command.
+        """
+        target_pos_w = orange_pos_w.clone()
+        target_pos_w[:, 0] -= 0.03
+        target_pos_w[:, 2] += _GRIPPER_OFFSET
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
+        return target_pos_w, gripper_cmd
+
+    def _phase_grasp(
+        self, orange_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 150–179: close the gripper to grasp the orange.
+
+        Args:
+            orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – target world position and gripper command.
+        """
+        target_pos_w = orange_pos_w.clone()
+        target_pos_w[:, 0] -= 0.03
+        target_pos_w[:, 2] += _GRIPPER_OFFSET
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_CLOSE, device=device)
+        return target_pos_w, gripper_cmd
+
+    def _phase_lift_orange(
+        self, orange_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 180–219: lift the grasped orange upward.
+
+        Args:
+            orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – target world position and gripper command.
+        """
+        target_pos_w = orange_pos_w.clone()
+        target_pos_w[:, 0] -= 0.03
+        target_pos_w[:, 2] += 0.25
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_CLOSE, device=device)
+        return target_pos_w, gripper_cmd
+
+    def _phase_move_above_plate(
+        self, plate_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 220–319: transport the orange to a hover position above the plate.
+
+        Args:
+            plate_pos_w: Plate position in world frame, shape ``(num_envs, 3)``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – target world position and gripper command.
+        """
+        target_pos_w = plate_pos_w.clone()
+        target_pos_w[:, 2] += 0.25
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_CLOSE, device=device)
+        return target_pos_w, gripper_cmd
+
+    def _phase_lower_to_plate(
+        self, plate_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 320–349: lower the orange to the placement height on the plate.
+
+        The target position is offset to one vertex of an equilateral triangle
+        so that successive oranges do not overlap.
+
+        Args:
+            plate_pos_w: Plate position in world frame, shape ``(num_envs, 3)``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – target world position and gripper command.
+        """
+        target_pos_w = plate_pos_w.clone()
+        target_pos_w[:, 2] += _GRIPPER_OFFSET + 0.1
+        _apply_triangle_offset(target_pos_w, self._orange_now)
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_CLOSE, device=device)
+        return target_pos_w, gripper_cmd
+
+    def _phase_release(
+        self, plate_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 350–379: open the gripper to release the orange onto the plate.
+
+        Args:
+            plate_pos_w: Plate position in world frame, shape ``(num_envs, 3)``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – target world position and gripper command.
+        """
+        target_pos_w = plate_pos_w.clone()
+        target_pos_w[:, 2] += _GRIPPER_OFFSET + 0.1
+        _apply_triangle_offset(target_pos_w, self._orange_now)
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
+        return target_pos_w, gripper_cmd
+
+    def _phase_lift_gripper(
+        self, plate_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 380–419: lift the gripper clear of the plate after releasing.
+
+        Args:
+            plate_pos_w: Plate position in world frame, shape ``(num_envs, 3)``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – target world position and gripper command.
+        """
+        target_pos_w = plate_pos_w.clone()
+        target_pos_w[:, 2] += 0.2
+        _apply_triangle_offset(target_pos_w, self._orange_now)
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
+        return target_pos_w, gripper_cmd
 
     def advance(self) -> None:
         """Advance the internal step counter and manage orange transitions.
