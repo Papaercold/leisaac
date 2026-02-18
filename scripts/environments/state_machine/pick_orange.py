@@ -226,9 +226,6 @@ def state_machine(env, step_count, target, orange_now):
     return actions
 
 
-MAX_STEPS = 420
-
-
 def main() -> None:
     """Run a pick-orange state machine in an Isaac Lab manipulation environment.
 
@@ -333,6 +330,8 @@ def main() -> None:
     orange_now = 1  # Index of the current orange to pick
     start_record_state = False
 
+    MAX_STEPS = 420  # Total steps for one pick-and-place cycle per orange
+    
     while simulation_app.is_running() and not simulation_app.is_exiting():
         # Place this at the top of the loop, right after env.scene.update(dt)
         # or before computing actions
