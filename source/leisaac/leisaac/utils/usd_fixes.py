@@ -5,6 +5,7 @@ USD-related utilities (best-effort fixes).
 import omni.usd
 from pxr import UsdGeom, UsdPhysics
 
+
 def auto_fix_collision_issues():
     """
     Convert certain mesh collisions to convex decomposition to reduce contact issues.

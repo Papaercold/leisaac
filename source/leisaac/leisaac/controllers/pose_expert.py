@@ -6,7 +6,8 @@ Outputs actions with layout:
 [pos_x, pos_y, pos_z, quat_x, quat_y, quat_z, quat_w, gripper]
 """
 import torch
-from isaaclab.utils.math import quat_from_euler_xyz, quat_mul, quat_inv, quat_apply
+from isaaclab.utils.math import quat_apply, quat_from_euler_xyz, quat_inv, quat_mul
+
 
 def apply_triangle_offset(pos_tensor: torch.Tensor, flag: int, radius: float = 0.1) -> torch.Tensor:
     """
@@ -17,6 +18,7 @@ def apply_triangle_offset(pos_tensor: torch.Tensor, flag: int, radius: float = 0
         radius: radius in meters
     """
     import math
+
     idx = (flag - 1) % 3
     angle = idx * (2 * math.pi / 3)
     offset_x = radius * math.cos(angle)
@@ -25,6 +27,7 @@ def apply_triangle_offset(pos_tensor: torch.Tensor, flag: int, radius: float = 0
     pos_tensor[:, 0] += offset_x
     pos_tensor[:, 1] += offset_y
     return pos_tensor
+
 
 def get_expert_action_pose_based(env, step_count: int, target: str, flag: int) -> torch.Tensor:
     """
@@ -106,15 +109,23 @@ def get_expert_action_pose_based(env, step_count: int, target: str, flag: int) -
     actions = torch.cat([target_pos_local, target_quat, gripper_cmd], dim=-1)
     return actions
 
+
 """
 Heuristics for detecting grasp phase.
 """
-from typing import Tuple, Dict, Any
+from typing import Any, Dict, Tuple
+
 import torch
 
-def is_grasp_phase_auto(env_local, orange_name: str, prev_gripper_t: torch.Tensor,
-                        dist_thresh: float = 0.06, rel_vel_thresh: float = 0.08,
-                        gripper_close_threshold: float = 0.7) -> Tuple[bool, Dict[str, Any]]:
+
+def is_grasp_phase_auto(
+    env_local,
+    orange_name: str,
+    prev_gripper_t: torch.Tensor,
+    dist_thresh: float = 0.06,
+    rel_vel_thresh: float = 0.08,
+    gripper_close_threshold: float = 0.7,
+) -> tuple[bool, dict[str, Any]]:
     """
     Return (is_grasp: bool, info: dict).
 
@@ -148,8 +159,8 @@ def is_grasp_phase_auto(env_local, orange_name: str, prev_gripper_t: torch.Tenso
 
         horiz_dist = torch.norm((orange_pos - ee_pos)[:, :2], dim=-1)
         full_dist = torch.norm((orange_pos - ee_pos), dim=-1)
-        info['horiz_dist'] = horiz_dist.detach().cpu().numpy().tolist()
-        info['full_dist'] = full_dist.detach().cpu().numpy().tolist()
+        info["horiz_dist"] = horiz_dist.detach().cpu().numpy().tolist()
+        info["full_dist"] = full_dist.detach().cpu().numpy().tolist()
 
         obj_speed = torch.zeros((orange_pos.shape[0],), device=device)
         ee_speed = torch.zeros((orange_pos.shape[0],), device=device)
@@ -167,9 +178,9 @@ def is_grasp_phase_auto(env_local, orange_name: str, prev_gripper_t: torch.Tenso
                 pass
 
         rel_speed = torch.minimum(obj_speed, ee_speed)
-        info['obj_speed'] = obj_speed.detach().cpu().numpy().tolist() if obj_speed.numel() else None
-        info['ee_speed'] = ee_speed.detach().cpu().numpy().tolist() if ee_speed.numel() else None
-        info['rel_speed'] = rel_speed.detach().cpu().numpy().tolist()
+        info["obj_speed"] = obj_speed.detach().cpu().numpy().tolist() if obj_speed.numel() else None
+        info["ee_speed"] = ee_speed.detach().cpu().numpy().tolist() if ee_speed.numel() else None
+        info["rel_speed"] = rel_speed.detach().cpu().numpy().tolist()
 
         # ensure prev_gripper_t on same device and as python list for mask
         try:
@@ -180,14 +191,16 @@ def is_grasp_phase_auto(env_local, orange_name: str, prev_gripper_t: torch.Tenso
             gripper_target = prev_gripper_t.view(-1).detach().cpu().numpy().tolist()
         except Exception:
             gripper_target = None
-        info['gripper_target'] = gripper_target
+        info["gripper_target"] = gripper_target
 
-        near_mask = (horiz_dist <= torch.as_tensor(dist_thresh, device=device))
-        slow_mask = (rel_speed <= torch.as_tensor(rel_vel_thresh, device=device))
+        near_mask = horiz_dist <= torch.as_tensor(dist_thresh, device=device)
+        slow_mask = rel_speed <= torch.as_tensor(rel_vel_thresh, device=device)
 
         if gripper_target is not None:
             try:
-                gripper_mask = torch.tensor([gt < gripper_close_threshold for gt in gripper_target], dtype=torch.bool, device=device)
+                gripper_mask = torch.tensor(
+                    [gt < gripper_close_threshold for gt in gripper_target], dtype=torch.bool, device=device
+                )
             except Exception:
                 gripper_mask = torch.zeros_like(near_mask, dtype=torch.bool, device=device)
         else:

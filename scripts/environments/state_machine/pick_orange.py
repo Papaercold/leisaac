@@ -6,7 +6,6 @@ import multiprocessing
 if multiprocessing.get_start_method() != "spawn":
     multiprocessing.set_start_method("spawn", force=True)
 import argparse
-
 import os
 import time
 
@@ -34,18 +33,18 @@ app_launcher_args = vars(args_cli)
 app_launcher = AppLauncher(app_launcher_args)
 simulation_app = app_launcher.app
 
-from isaaclab.managers import DatasetExportMode, TerminationTermCfg
+import math
+
+import gymnasium as gym
+import torch
 from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
-from isaaclab_tasks.utils import parse_env_cfg
+from isaaclab.managers import DatasetExportMode, SceneEntityCfg, TerminationTermCfg
 from isaaclab.utils.math import quat_apply, quat_from_euler_xyz, quat_inv, quat_mul
-from isaaclab.managers import SceneEntityCfg
-from leisaac.enhance.managers import StreamingRecorderManager, EnhanceDatasetExportMode
+from isaaclab_tasks.utils import parse_env_cfg
+from leisaac.enhance.managers import EnhanceDatasetExportMode, StreamingRecorderManager
 from leisaac.tasks.pick_orange.mdp import task_done
 from leisaac.utils.env_utils import dynamic_reset_gripper_effort_limit_sim
 
-import torch
-import math
-import gymnasium as gym
 
 class RateLimiter:
     """Convenience class for enforcing rates in loops."""
@@ -86,26 +85,19 @@ def auto_terminate(env: ManagerBasedRLEnv | DirectRLEnv, success: bool):
         if success:
             env.termination_manager.set_term_cfg(
                 "success",
-                TerminationTermCfg(
-                    func=lambda env: torch.ones(
-                        env.num_envs, dtype=torch.bool, device=env.device
-                    )
-                ),
+                TerminationTermCfg(func=lambda env: torch.ones(env.num_envs, dtype=torch.bool, device=env.device)),
             )
         else:
             env.termination_manager.set_term_cfg(
                 "success",
-                TerminationTermCfg(
-                    func=lambda env: torch.zeros(
-                        env.num_envs, dtype=torch.bool, device=env.device
-                    )
-                ),
+                TerminationTermCfg(func=lambda env: torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)),
             )
         env.termination_manager.compute()
     elif hasattr(env, "_get_dones"):
         # fallback for some Direct envs
         env.cfg.return_success_status = success
     return False
+
 
 def apply_triangle_offset(pos_tensor, orange_now, radius=0.1):
     """
@@ -139,6 +131,7 @@ def apply_triangle_offset(pos_tensor, orange_now, radius=0.1):
     pos_tensor[:, 1] += offset_y
 
     return pos_tensor
+
 
 def state_machine(env, step_count, target, orange_now):
     """
@@ -187,44 +180,41 @@ def state_machine(env, step_count, target, orange_now):
         torch.tensor(0.0, device=device),
     ).repeat(num_envs, 1)
 
-    target_quat = quat_mul(
-        quat_inv(robot_base_quat_w),
-        target_quat_w
-    )
+    target_quat = quat_mul(quat_inv(robot_base_quat_w), target_quat_w)
     GRIPPER = 0.1
-    
+
     gripper_cmd = torch.full((num_envs, 1), 1.0, device=device)
 
-    #move above orange
+    # move above orange
     if step_count < 120:
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
         gripper_cmd[:] = 1.0
         target_pos_w[:, 2] += 0.1 + GRIPPER
-    #lower to orange
+    # lower to orange
     elif step_count < 150:
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
         gripper_cmd[:] = 1.0
         target_pos_w[:, 2] += GRIPPER
-    #close gripper
+    # close gripper
     elif step_count < 180:
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
         gripper_cmd[:] = -1.0
         target_pos_w[:, 2] += GRIPPER
-    #lift orange
+    # lift orange
     elif step_count < 220:
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
         gripper_cmd[:] = -1.0
         target_pos_w[:, 2] += 0.25
-    #move above plate
+    # move above plate
     elif step_count < 320:
         gripper_cmd[:] = -1.0
         target_pos_w = plate_pos_w.clone()
         target_pos_w[:, 2] += 0.25
-    #lower to plate
+    # lower to plate
     elif step_count < 350:
         target_pos_w = plate_pos_w.clone()
         target_pos_w[:, 2] += GRIPPER + 0.1
@@ -252,8 +242,9 @@ def state_machine(env, step_count, target, orange_now):
     return actions
 
 
-
 MAX_STEPS = 420
+
+
 def main() -> None:
     """
     Run a pick-orange state machine in an Isaac Lab manipulation environment.
@@ -277,7 +268,7 @@ def main() -> None:
     env_cfg.use_teleop_device(device)
     env_cfg.seed = args_cli.seed if args_cli.seed is not None else int(time.time())
     task_name = args_cli.task
-    
+
     # Timeout and termination preprocessing
     is_direct_env = "Direct" in task_name
     if is_direct_env:
@@ -323,12 +314,16 @@ def main() -> None:
 
     # Create environment
     env: ManagerBasedRLEnv | DirectRLEnv = gym.make(task_name, cfg=env_cfg).unwrapped
-        
+
     if args_cli.record:
         del env.recorder_manager
         if args_cli.use_lerobot_recorder:
-            from leisaac.enhance.datasets.lerobot_dataset_handler import LeRobotDatasetCfg
-            from leisaac.enhance.managers.lerobot_recorder_manager import LeRobotRecorderManager
+            from leisaac.enhance.datasets.lerobot_dataset_handler import (
+                LeRobotDatasetCfg,
+            )
+            from leisaac.enhance.managers.lerobot_recorder_manager import (
+                LeRobotRecorderManager,
+            )
 
             dataset_cfg = LeRobotDatasetCfg(
                 repo_id=args_cli.lerobot_dataset_repo_id,
@@ -353,11 +348,11 @@ def main() -> None:
         resume_recorded_demo_count = env.recorder_manager._dataset_file_handler.get_num_episodes()
         print(f"Resuming recording from existing dataset with {resume_recorded_demo_count} demonstrations.")
     current_recorded_demo_count = resume_recorded_demo_count
-    
+
     step_count = 0
     orange_now = 1  # Index of the current orange to pick
     start_record_state = False
-    
+
     while simulation_app.is_running() and not simulation_app.is_exiting():
         # Place this at the top of the loop, right after env.scene.update(dt)
         # or before computing actions
@@ -433,7 +428,7 @@ def main() -> None:
 
             # Reset environment regardless of success or failure
             print(
-                f"Completed one cycle. Resetting environment and moving to next orange "
+                "Completed one cycle. Resetting environment and moving to next orange "
                 f"(orange_now {orange_now} -> {orange_now + 1})."
             )
 
@@ -455,7 +450,7 @@ def main() -> None:
     env.close()
     simulation_app.close()
 
+
 if __name__ == "__main__":
     # run the main function
     main()
-

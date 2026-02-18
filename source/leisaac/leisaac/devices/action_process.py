@@ -99,7 +99,7 @@ def init_action_cfg(action_cfg, device):
             open_command_expr={"gripper": 1.0},
             close_command_expr={"gripper": 0.4},
         )
-        
+
     """LeKiwi action configuration"""
     if device in ["lekiwi-leader", "lekiwi-keyboard", "lekiwi-gamepad"]:
         action_cfg.wheel_action = mdp.JointVelocityActionCfg(
