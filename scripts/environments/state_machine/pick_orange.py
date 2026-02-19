@@ -166,6 +166,20 @@ def main() -> None:
     # Create environment
     env: ManagerBasedRLEnv | DirectRLEnv = gym.make(task_name, cfg=env_cfg).unwrapped
 
+    # Disable gravity for every robot link prim.
+    # IsaacLab's disable_gravity flag in ArticulationCfg.spawn.rigid_props only writes
+    # to the articulation ROOT prim; individual link prims (shoulder_pan_link, elbow_flex_link,
+    # etc.) each carry their own PhysicsRigidBodyAPI with gravity still enabled.
+    # This block traverses the USD stage and explicitly sets disableGravity=True on every
+    # rigid-body prim that belongs to the robot, fixing the gravity-induced arm drop at reset.
+    import omni.usd
+    from pxr import PhysxSchema, UsdPhysics
+
+    _stage = omni.usd.get_context().get_stage()
+    for _prim in _stage.Traverse():
+        if "Robot" in str(_prim.GetPath()) and _prim.HasAPI(UsdPhysics.RigidBodyAPI):
+            PhysxSchema.PhysxRigidBodyAPI.Apply(_prim).CreateDisableGravityAttr(True)
+
     if args_cli.record:
         del env.recorder_manager
         if args_cli.use_lerobot_recorder:

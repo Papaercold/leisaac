@@ -70,7 +70,7 @@ class PickOrangeStateMachine(StateMachineBase):
         sm.reset()
     """
 
-    MAX_STEPS_PER_ORANGE: int = 840
+    MAX_STEPS_PER_ORANGE: int = 660
 
     def __init__(self, num_oranges: int = 3) -> None:
         self._num_oranges = num_oranges
@@ -125,6 +125,11 @@ class PickOrangeStateMachine(StateMachineBase):
         # body_pos_w is always valid after env.reset() and does not suffer from stale sensor data.
         if self._orange_now == 1 and step == 0:
             self._initial_ee_pos = env.scene["robot"].data.body_pos_w[:, -1, :].clone()
+            print("initial_ee_pos:", self._initial_ee_pos[0].cpu().numpy())
+            print("robot_base_pos_w:", robot_base_pos_w[0].cpu().numpy())
+            print("robot_base_quat_w:", robot_base_quat_w[0].cpu().numpy())
+            robot = env.scene["robot"]
+            robot.write_joint_damping_to_sim(damping=4.0)
 
         # --- Phase dispatch ---
         if self._orange_now == 1 and step < _APPROACH_STEPS:
@@ -137,14 +142,16 @@ class PickOrangeStateMachine(StateMachineBase):
             target_pos_w, gripper_cmd = self._phase_grasp(orange_pos_w, num_envs, device)
         elif step < 440:
             target_pos_w, gripper_cmd = self._phase_lift_orange(orange_pos_w, num_envs, device)
-        elif step < 640:
+        elif step < 490:
             target_pos_w, gripper_cmd = self._phase_move_above_plate(plate_pos_w, num_envs, device)
-        elif step < 700:
+        elif step < 540:
             target_pos_w, gripper_cmd = self._phase_lower_to_plate(plate_pos_w, num_envs, device)
-        elif step < 760:
+        elif step < 580:
             target_pos_w, gripper_cmd = self._phase_release(plate_pos_w, num_envs, device)
-        else:
+        elif step < 620:
             target_pos_w, gripper_cmd = self._phase_lift_gripper(plate_pos_w, num_envs, device)
+        else:
+            target_pos_w, gripper_cmd = self._phase_return_home(num_envs, device)
 
         diff_w = target_pos_w - robot_base_pos_w
         target_pos_local = quat_apply(quat_inv(robot_base_quat_w), diff_w)
@@ -341,6 +348,31 @@ class PickOrangeStateMachine(StateMachineBase):
         target_pos_w = plate_pos_w.clone()
         target_pos_w[:, 2] += 0.2
         _apply_triangle_offset(target_pos_w, self._orange_now)
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
+        return target_pos_w, gripper_cmd
+
+    def _phase_return_home(
+        self, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 620–659: return the gripper to the episode's initial end-effector position.
+
+        Targets the EE position that was captured at step 0 from
+        ``robot.data.body_pos_w`` (the zero-joint configuration).  This brings
+        the arm back to a neutral home pose at the end of each orange's cycle,
+        ensuring a consistent starting point for the next orange (or for the
+        episode-done check).
+
+        Args:
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – home world position and open gripper command.
+        """
+        if self._initial_ee_pos is not None:
+            target_pos_w = self._initial_ee_pos.clone()
+        else:
+            target_pos_w = torch.zeros(num_envs, 3, device=device)
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
         return target_pos_w, gripper_cmd
 
