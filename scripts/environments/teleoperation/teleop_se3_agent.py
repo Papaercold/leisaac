@@ -196,7 +196,6 @@ def main():  # noqa: C901
                     args_cli.dataset_file
                 ), "the dataset file does not exist, please don't use '--resume' if you want to record a new dataset"
             else:
-
                 env_cfg.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL
                 assert not os.path.exists(
                     args_cli.dataset_file
