@@ -14,6 +14,7 @@ from .base import StateMachineBase
 _GRIPPER_OPEN = 1.0
 _GRIPPER_CLOSE = -1.0
 _GRIPPER_OFFSET = 0.1  # vertical clearance for the gripper tip
+_WARMUP_STEPS: int = 30  # physics-settle steps at episode start (first orange only)
 
 
 def _apply_triangle_offset(pos_tensor: torch.Tensor, orange_now: int, radius: float = 0.1) -> torch.Tensor:
@@ -120,7 +121,10 @@ class PickOrangeStateMachine(StateMachineBase):
         target_quat = quat_mul(quat_inv(robot_base_quat_w), target_quat_w)
 
         # --- Phase dispatch ---
-        if step < 120:
+        if self._orange_now == 1 and step < _WARMUP_STEPS:
+            ee_pos_w = env.scene["ee_frame"].data.target_pos_w[:, 0, :].clone()
+            target_pos_w, gripper_cmd = self._phase_warmup(ee_pos_w, num_envs, device)
+        elif step < 120:
             target_pos_w, gripper_cmd = self._phase_hover_above_orange(orange_pos_w, num_envs, device)
         elif step < 150:
             target_pos_w, gripper_cmd = self._phase_lower_to_orange(orange_pos_w, num_envs, device)
@@ -145,6 +149,28 @@ class PickOrangeStateMachine(StateMachineBase):
     # ------------------------------------------------------------------
     # Phase methods  (steps 0-419, one method per phase)
     # ------------------------------------------------------------------
+
+    def _phase_warmup(
+        self, ee_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 0–_WARMUP_STEPS-1 of the first orange: hold the current EE position.
+
+        Keeps the IK target at the robot's actual end-effector position so the
+        physics simulation can settle before any deliberate motion begins.  Only
+        active during the first orange's cycle; subsequent oranges skip directly
+        to the hover phase.
+
+        Args:
+            ee_pos_w: Current end-effector position in world frame, shape ``(num_envs, 3)``.
+                Obtained from ``env.scene["ee_frame"].data.target_pos_w[:, 0, :]``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – current EE world position and open gripper command.
+        """
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
+        return ee_pos_w, gripper_cmd
 
     def _phase_hover_above_orange(
         self, orange_pos_w: torch.Tensor, num_envs: int, device: str
