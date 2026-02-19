@@ -14,7 +14,7 @@ from .base import StateMachineBase
 _GRIPPER_OPEN = 1.0
 _GRIPPER_CLOSE = -1.0
 _GRIPPER_OFFSET = 0.1  # vertical clearance for the gripper tip
-_APPROACH_STEPS: int = 60  # steps to smoothly interpolate from init EE pos to hover (first orange only)
+_APPROACH_STEPS: int = 120  # steps to smoothly interpolate from init EE pos to hover (first orange only)
 
 
 def _apply_triangle_offset(pos_tensor: torch.Tensor, orange_now: int, radius: float = 0.1) -> torch.Tensor:
@@ -70,7 +70,7 @@ class PickOrangeStateMachine(StateMachineBase):
         sm.reset()
     """
 
-    MAX_STEPS_PER_ORANGE: int = 420
+    MAX_STEPS_PER_ORANGE: int = 840
 
     def __init__(self, num_oranges: int = 3) -> None:
         self._num_oranges = num_oranges
@@ -129,19 +129,19 @@ class PickOrangeStateMachine(StateMachineBase):
         # --- Phase dispatch ---
         if self._orange_now == 1 and step < _APPROACH_STEPS:
             target_pos_w, gripper_cmd = self._phase_approach_hover(orange_pos_w, num_envs, device)
-        elif step < 120:
+        elif step < 240:
             target_pos_w, gripper_cmd = self._phase_hover_above_orange(orange_pos_w, num_envs, device)
-        elif step < 150:
+        elif step < 300:
             target_pos_w, gripper_cmd = self._phase_lower_to_orange(orange_pos_w, num_envs, device)
-        elif step < 180:
+        elif step < 360:
             target_pos_w, gripper_cmd = self._phase_grasp(orange_pos_w, num_envs, device)
-        elif step < 220:
+        elif step < 440:
             target_pos_w, gripper_cmd = self._phase_lift_orange(orange_pos_w, num_envs, device)
-        elif step < 320:
+        elif step < 640:
             target_pos_w, gripper_cmd = self._phase_move_above_plate(plate_pos_w, num_envs, device)
-        elif step < 350:
+        elif step < 700:
             target_pos_w, gripper_cmd = self._phase_lower_to_plate(plate_pos_w, num_envs, device)
-        elif step < 380:
+        elif step < 760:
             target_pos_w, gripper_cmd = self._phase_release(plate_pos_w, num_envs, device)
         else:
             target_pos_w, gripper_cmd = self._phase_lift_gripper(plate_pos_w, num_envs, device)
