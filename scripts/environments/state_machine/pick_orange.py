@@ -236,18 +236,18 @@ def main() -> None:
         if _name in _REST_POSE_DEG:
             _rest_joint_pos[:, _idx] = _REST_POSE_DEG[_name] * torch.pi / 180.0
 
-    _robot.write_joint_stiffness_to_sim(stiffness=5000.0)
-    _robot.write_joint_damping_to_sim(damping=100.0)
-    _robot.write_joint_position_target_to_sim(_rest_joint_pos)
-    for _ in range(30):
-        env.sim.step(render=False)
-        env.scene.update(dt=env.physics_dt)
+    # write_joint_state_to_sim teleports joints to the exact rest pose instantly.
+    # This is simpler than target-based control: no stiffness tuning or multiple steps needed.
+    _robot.write_joint_state_to_sim(
+        position=_rest_joint_pos,
+        velocity=torch.zeros_like(_rest_joint_pos),
+    )
+    env.sim.step(render=False)
+    env.scene.update(dt=env.physics_dt)
     _rest_ee_pos_world = _robot.data.body_pos_w[:, -1, :].clone()
     print(f"[Calibration] Rest pose EE (world): {_rest_ee_pos_world[0].cpu().numpy()}")
 
-    # Restore original gains and reset scene to initial state
-    _robot.write_joint_stiffness_to_sim(stiffness=17.8)
-    _robot.write_joint_damping_to_sim(damping=0.6)
+    # Reset scene to initial state (joints back to zero, objects to default positions)
     env.reset()
     # -------------------------------------------------------------------------
 
