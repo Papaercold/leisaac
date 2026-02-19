@@ -14,7 +14,7 @@ from .base import StateMachineBase
 _GRIPPER_OPEN = 1.0
 _GRIPPER_CLOSE = -1.0
 _GRIPPER_OFFSET = 0.1  # vertical clearance for the gripper tip
-_WARMUP_STEPS: int = 30  # physics-settle steps at episode start (first orange only)
+_APPROACH_STEPS: int = 60  # steps to smoothly interpolate from init EE pos to hover (first orange only)
 
 
 def _apply_triangle_offset(pos_tensor: torch.Tensor, orange_now: int, radius: float = 0.1) -> torch.Tensor:
@@ -77,6 +77,7 @@ class PickOrangeStateMachine(StateMachineBase):
         self._step_count: int = 0
         self._orange_now: int = 1
         self._episode_done: bool = False
+        self._initial_ee_pos: torch.Tensor | None = None
 
     # ------------------------------------------------------------------
     # StateMachineBase interface
@@ -120,10 +121,14 @@ class PickOrangeStateMachine(StateMachineBase):
         ).repeat(num_envs, 1)
         target_quat = quat_mul(quat_inv(robot_base_quat_w), target_quat_w)
 
+        # Capture initial EE position from robot body data at episode start (step 0, orange 1).
+        # body_pos_w is always valid after env.reset() and does not suffer from stale sensor data.
+        if self._orange_now == 1 and step == 0:
+            self._initial_ee_pos = env.scene["robot"].data.body_pos_w[:, -1, :].clone()
+
         # --- Phase dispatch ---
-        if self._orange_now == 1 and step < _WARMUP_STEPS:
-            ee_pos_w = env.scene["ee_frame"].data.target_pos_w[:, 0, :].clone()
-            target_pos_w, gripper_cmd = self._phase_warmup(ee_pos_w, num_envs, device)
+        if self._orange_now == 1 and step < _APPROACH_STEPS:
+            target_pos_w, gripper_cmd = self._phase_approach_hover(orange_pos_w, num_envs, device)
         elif step < 120:
             target_pos_w, gripper_cmd = self._phase_hover_above_orange(orange_pos_w, num_envs, device)
         elif step < 150:
@@ -150,27 +155,40 @@ class PickOrangeStateMachine(StateMachineBase):
     # Phase methods  (steps 0-419, one method per phase)
     # ------------------------------------------------------------------
 
-    def _phase_warmup(
-        self, ee_pos_w: torch.Tensor, num_envs: int, device: str
+    def _phase_approach_hover(
+        self, orange_pos_w: torch.Tensor, num_envs: int, device: str
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Steps 0–_WARMUP_STEPS-1 of the first orange: hold the current EE position.
+        """Steps 0–_APPROACH_STEPS-1 of the first orange: smoothly approach hover position.
 
-        Keeps the IK target at the robot's actual end-effector position so the
-        physics simulation can settle before any deliberate motion begins.  Only
-        active during the first orange's cycle; subsequent oranges skip directly
-        to the hover phase.
+        Linearly interpolates the IK target from the robot's initial end-effector
+        position (captured at step 0 from ``robot.data.body_pos_w``) to the hover
+        position above the orange.  This avoids the sudden large IK error that
+        occurs when jumping directly from the zero-joint configuration to the hover
+        target, which caused the arm to visually drop and oscillate.
+
+        Only active for the first orange; subsequent oranges proceed directly to the
+        hover phase because the arm is already in a reasonable working configuration.
 
         Args:
-            ee_pos_w: Current end-effector position in world frame, shape ``(num_envs, 3)``.
-                Obtained from ``env.scene["ee_frame"].data.target_pos_w[:, 0, :]``.
+            orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
             num_envs: Number of parallel environments.
             device: Torch device string.
 
         Returns:
-            ``(target_pos_w, gripper_cmd)`` – current EE world position and open gripper command.
+            ``(target_pos_w, gripper_cmd)`` – interpolated world position and open gripper command.
         """
+        hover_target = orange_pos_w.clone()
+        hover_target[:, 0] -= 0.03
+        hover_target[:, 2] += 0.1 + _GRIPPER_OFFSET
+
+        alpha = self._step_count / _APPROACH_STEPS  # 0.0 at step 0, 1.0 at step _APPROACH_STEPS
+        if self._initial_ee_pos is not None:
+            target_pos_w = (1.0 - alpha) * self._initial_ee_pos + alpha * hover_target
+        else:
+            target_pos_w = hover_target
+
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
-        return ee_pos_w, gripper_cmd
+        return target_pos_w, gripper_cmd
 
     def _phase_hover_above_orange(
         self, orange_pos_w: torch.Tensor, num_envs: int, device: str
@@ -349,6 +367,7 @@ class PickOrangeStateMachine(StateMachineBase):
         self._step_count = 0
         self._orange_now = 1
         self._episode_done = False
+        self._initial_ee_pos = None
 
     # ------------------------------------------------------------------
     # Properties
