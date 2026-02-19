@@ -129,7 +129,7 @@ class PickOrangeStateMachine(StateMachineBase):
             print("robot_base_pos_w:", robot_base_pos_w[0].cpu().numpy())
             print("robot_base_quat_w:", robot_base_quat_w[0].cpu().numpy())
             robot = env.scene["robot"]
-            robot.write_joint_damping_to_sim(damping=4.0)
+            robot.write_joint_damping_to_sim(damping=1.0)
 
         # --- Phase dispatch ---
         if self._orange_now == 1 and step < _APPROACH_STEPS:
@@ -156,6 +156,17 @@ class PickOrangeStateMachine(StateMachineBase):
         diff_w = target_pos_w - robot_base_pos_w
         target_pos_local = quat_apply(quat_inv(robot_base_quat_w), diff_w)
 
+        idx = 0  # 只看第0个环境
+
+        # 目标位置（world）
+        print("STEP:", self._step_count, "ORANGE:", self._orange_now)
+        print("Target (world):", target_pos_w[idx].cpu().numpy())
+
+        # 实际末端位置（world）
+        print("Actual EE (world):", 
+            env.scene["robot"].data.body_pos_w[idx, -1, :].cpu().numpy())
+
+        print("----------------------------------")
         return torch.cat([target_pos_local, target_quat, gripper_cmd], dim=-1)
 
     # ------------------------------------------------------------------
