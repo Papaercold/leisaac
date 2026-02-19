@@ -90,7 +90,7 @@ def init_action_cfg(action_cfg, device):
             controller=mdp.DifferentialIKControllerCfg(
                 command_type="pose",
                 ik_method="dls",
-                ik_params={"lambda_val": 0.4},
+                ik_params={"lambda_val": 0.04},
             ),
         )
         action_cfg.gripper_action = mdp.BinaryJointPositionActionCfg(

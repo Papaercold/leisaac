@@ -214,7 +214,44 @@ def main() -> None:
         print(f"Resuming recording from existing dataset with {resume_recorded_demo_count} demonstrations.")
     current_recorded_demo_count = resume_recorded_demo_count
 
-    sm = PickOrangeStateMachine(num_oranges=3)
+    # --- FK calibration: drive arm to rest pose and record the EE world position ---
+    # task_done() requires SO-101 joints within SO101_FOLLOWER_REST_POSE_RANGE
+    # (shoulder_lift≈-100°, elbow_flex≈90°, wrist_flex≈50°, ±30° each).
+    # The IK action controls EE position, not joints directly.  We find the EE
+    # position that corresponds to the rest pose by temporarily driving the arm
+    # there with high stiffness, then reading body_pos_w.  env.reset() afterwards
+    # returns every scene object to its default state.
+    _robot = env.scene["robot"]
+    _joint_names = list(_robot.data.joint_names)
+    _REST_POSE_DEG = {
+        "shoulder_pan": 0.0,
+        "shoulder_lift": -100.0,
+        "elbow_flex": 90.0,
+        "wrist_flex": 50.0,
+        "wrist_roll": 0.0,
+        "gripper": -10.0,
+    }
+    _rest_joint_pos = torch.zeros(env.num_envs, len(_joint_names), device=env.device)
+    for _idx, _name in enumerate(_joint_names):
+        if _name in _REST_POSE_DEG:
+            _rest_joint_pos[:, _idx] = _REST_POSE_DEG[_name] * torch.pi / 180.0
+
+    _robot.write_joint_stiffness_to_sim(stiffness=5000.0)
+    _robot.write_joint_damping_to_sim(damping=100.0)
+    _robot.write_joint_position_target_to_sim(_rest_joint_pos)
+    for _ in range(30):
+        env.sim.step(render=False)
+        env.scene.update(dt=env.physics_dt)
+    _rest_ee_pos_world = _robot.data.body_pos_w[:, -1, :].clone()
+    print(f"[Calibration] Rest pose EE (world): {_rest_ee_pos_world[0].cpu().numpy()}")
+
+    # Restore original gains and reset scene to initial state
+    _robot.write_joint_stiffness_to_sim(stiffness=17.8)
+    _robot.write_joint_damping_to_sim(damping=0.6)
+    env.reset()
+    # -------------------------------------------------------------------------
+
+    sm = PickOrangeStateMachine(num_oranges=3, rest_ee_pos_world=_rest_ee_pos_world)
     sm.reset()
     start_record_state = False
 

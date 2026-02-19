@@ -70,14 +70,15 @@ class PickOrangeStateMachine(StateMachineBase):
         sm.reset()
     """
 
-    MAX_STEPS_PER_ORANGE: int = 660
+    MAX_STEPS_PER_ORANGE: int = 920
 
-    def __init__(self, num_oranges: int = 3) -> None:
+    def __init__(self, num_oranges: int = 3, rest_ee_pos_world: torch.Tensor | None = None) -> None:
         self._num_oranges = num_oranges
         self._step_count: int = 0
         self._orange_now: int = 1
         self._episode_done: bool = False
         self._initial_ee_pos: torch.Tensor | None = None
+        self._rest_ee_pos_world = rest_ee_pos_world  # (num_envs, 3) world frame, computed by FK calibration
 
     # ------------------------------------------------------------------
     # StateMachineBase interface
@@ -123,14 +124,12 @@ class PickOrangeStateMachine(StateMachineBase):
 
         # Capture initial EE position from robot body data at episode start (step 0, orange 1).
         # body_pos_w is always valid after env.reset() and does not suffer from stale sensor data.
+        robot = env.scene["robot"]
+        robot.write_joint_damping_to_sim(damping=10.0)
+        
         if self._orange_now == 1 and step == 0:
             self._initial_ee_pos = env.scene["robot"].data.body_pos_w[:, -1, :].clone()
-            print("initial_ee_pos:", self._initial_ee_pos[0].cpu().numpy())
-            print("robot_base_pos_w:", robot_base_pos_w[0].cpu().numpy())
-            print("robot_base_quat_w:", robot_base_quat_w[0].cpu().numpy())
-            robot = env.scene["robot"]
-            robot.write_joint_damping_to_sim(damping=1.0)
-
+            # 或者直接设置 drive params（依据你 robot API）
         # --- Phase dispatch ---
         if self._orange_now == 1 and step < _APPROACH_STEPS:
             target_pos_w, gripper_cmd = self._phase_approach_hover(orange_pos_w, num_envs, device)
@@ -156,17 +155,6 @@ class PickOrangeStateMachine(StateMachineBase):
         diff_w = target_pos_w - robot_base_pos_w
         target_pos_local = quat_apply(quat_inv(robot_base_quat_w), diff_w)
 
-        idx = 0  # 只看第0个环境
-
-        # 目标位置（world）
-        print("STEP:", self._step_count, "ORANGE:", self._orange_now)
-        print("Target (world):", target_pos_w[idx].cpu().numpy())
-
-        # 实际末端位置（world）
-        print("Actual EE (world):", 
-            env.scene["robot"].data.body_pos_w[idx, -1, :].cpu().numpy())
-
-        print("----------------------------------")
         return torch.cat([target_pos_local, target_quat, gripper_cmd], dim=-1)
 
     # ------------------------------------------------------------------
@@ -365,22 +353,28 @@ class PickOrangeStateMachine(StateMachineBase):
     def _phase_return_home(
         self, num_envs: int, device: str
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Steps 620–659: return the gripper to the episode's initial end-effector position.
+        """Steps 620–919: return the gripper to the robot's rest pose end-effector position.
 
-        Targets the EE position that was captured at step 0 from
-        ``robot.data.body_pos_w`` (the zero-joint configuration).  This brings
-        the arm back to a neutral home pose at the end of each orange's cycle,
-        ensuring a consistent starting point for the next orange (or for the
-        episode-done check).
+        Targets the EE position that was computed by FK calibration at startup
+        (``rest_ee_pos_world``), which corresponds to the SO-101 rest pose joints
+        (shoulder_lift ≈ -100°, elbow_flex ≈ 90°, wrist_flex ≈ 50°).  The
+        incremental IK will drive the arm toward this position over the 300 steps
+        (~5 s at 60 Hz), giving it enough time to converge within the ±30° joint
+        tolerance required by ``task_done``.
+
+        Falls back to ``_initial_ee_pos`` (zero-joint EE) if calibration was
+        not performed.
 
         Args:
             num_envs: Number of parallel environments.
             device: Torch device string.
 
         Returns:
-            ``(target_pos_w, gripper_cmd)`` – home world position and open gripper command.
+            ``(target_pos_w, gripper_cmd)`` – rest-pose world position and open gripper command.
         """
-        if self._initial_ee_pos is not None:
+        if self._rest_ee_pos_world is not None:
+            target_pos_w = self._rest_ee_pos_world.clone()
+        elif self._initial_ee_pos is not None:
             target_pos_w = self._initial_ee_pos.clone()
         else:
             target_pos_w = torch.zeros(num_envs, 3, device=device)
