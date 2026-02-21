@@ -99,6 +99,29 @@ def init_action_cfg(action_cfg, device):
             open_command_expr={"gripper": 1.0},
             close_command_expr={"gripper": 0.4},
         )
+    elif device in ["bi_so101_state_machine"]:
+        # Bi-arm IK state machine: left arm + right arm, each with absolute-pose IK + binary gripper.
+        # Action tensor layout: [left_ik(7), left_gripper(1), right_ik(7), right_gripper(1)] = 16D
+        _ik_cfg = lambda asset: mdp.DifferentialInverseKinematicsActionCfg(
+            asset_name=asset,
+            joint_names=["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"],
+            body_name="gripper",
+            controller=mdp.DifferentialIKControllerCfg(
+                command_type="pose",
+                ik_method="dls",
+                ik_params={"lambda_val": 0.04},
+            ),
+        )
+        _grip_cfg = lambda asset: mdp.BinaryJointPositionActionCfg(
+            asset_name=asset,
+            joint_names=["gripper"],
+            open_command_expr={"gripper": 1.0},
+            close_command_expr={"gripper": 0.4},
+        )
+        action_cfg.left_arm_action = _ik_cfg("left_arm")
+        action_cfg.left_gripper_action = _grip_cfg("left_arm")
+        action_cfg.right_arm_action = _ik_cfg("right_arm")
+        action_cfg.right_gripper_action = _grip_cfg("right_arm")
 
     """LeKiwi action configuration"""
     if device in ["lekiwi-leader", "lekiwi-keyboard", "lekiwi-gamepad"]:
@@ -150,9 +173,6 @@ def preprocess_device_action(action: dict[str, Any], teleop_device) -> torch.Ten
             action["joint_state"], action["motor_limits"], teleop_device
         )
     elif action.get("keyboard") is not None or action.get("gamepad") is not None:
-        processed_action = torch.zeros(teleop_device.env.num_envs, 8, device=teleop_device.env.device)
-        processed_action[:, :] = action["joint_state"]
-    elif action.get("so101_state_machine") is not None:
         processed_action = torch.zeros(teleop_device.env.num_envs, 8, device=teleop_device.env.device)
         processed_action[:, :] = action["joint_state"]
     elif action.get("bi_so101_leader") is not None:
