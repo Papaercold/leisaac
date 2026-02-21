@@ -1,4 +1,3 @@
-import dataclasses
 from dataclasses import MISSING
 from typing import Any
 
@@ -197,14 +196,6 @@ class SingleArmTaskEnvCfg(ManagerBasedRLEnvCfg):
         self.actions = init_action_cfg(self.actions, device=teleop_device)
         if teleop_device in ["keyboard", "gamepad", "so101_state_machine"]:
             self.scene.robot.spawn.rigid_props.disable_gravity = True
-        if teleop_device in ["so101_state_machine"]:
-            self.scene.robot.actuators["sts3215-arm"] = dataclasses.replace(
-                self.scene.robot.actuators["sts3215-arm"], damping=10.0
-            )
-            self.scene.robot.actuators["sts3215-gripper"] = dataclasses.replace(
-                self.scene.robot.actuators["sts3215-gripper"], damping=10.0
-            )
-
     def preprocess_device_action(self, action: dict[str, Any], teleop_device) -> torch.Tensor:
         return preprocess_device_action(action, teleop_device)
 

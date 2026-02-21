@@ -6,7 +6,7 @@ EPISODE_ID=${3:-1}
 
 cd /media/zihan-gao/leisaac || exit
 
-python scripts/environments/teleoperation/replay.py \
+python scripts/environments/state_machine/replay.py \
     --dataset_file=${DATASET} \
     --task=${TASK_NAME} \
     --num_envs=1 \

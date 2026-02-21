@@ -105,6 +105,9 @@ class PickOrangeStateMachine(StateMachineBase):
             ``[pos_x, pos_y, pos_z, quat_x, quat_y, quat_z, quat_w, gripper]``
             expressed in the robot base frame.
         """
+        robot = env.scene["robot"]
+        robot.write_joint_damping_to_sim(damping=10.0)
+
         device = env.device
         num_envs = env.num_envs
         step = self._step_count

@@ -42,7 +42,6 @@ from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
 from isaaclab.managers import DatasetExportMode, SceneEntityCfg, TerminationTermCfg
 from isaaclab_tasks.utils import parse_env_cfg
 
-from leisaac.assets.robots.lerobot import SO101_FOLLOWER_REST_POSE_RANGE
 from leisaac.enhance.managers import EnhanceDatasetExportMode, StreamingRecorderManager
 from leisaac.state_machine import PickOrangeStateMachine
 from leisaac.tasks.pick_orange.mdp import task_done
@@ -264,18 +263,6 @@ def main() -> None:
         if sm.is_episode_done:
             # --- Check whether the current episode is considered successful ---
             try:
-                # --- debug: print actual joint positions at episode end (before teleport) ---
-                _dbg_joint_pos_deg = _robot.data.joint_pos[0] / torch.pi * 180.0
-                _dbg_joint_names = list(_robot.data.joint_names)
-                print("\n[DEBUG] Episode ended. Actual joint positions (before teleport to rest pose):")
-                print(f"  {'joint':<15} {'current(deg)':>13}  {'range':>20}  {'ok?':>4}")
-                for _joint_name, (_lo, _hi) in SO101_FOLLOWER_REST_POSE_RANGE.items():
-                    _idx = _dbg_joint_names.index(_joint_name)
-                    _cur = _dbg_joint_pos_deg[_idx].item()
-                    _ok = "YES" if _lo < _cur < _hi else "NO "
-                    print(f"  {_joint_name:<15} {_cur:>13.2f}  ({_lo:>7.1f}, {_hi:>7.1f})  {_ok}")
-                # --- end debug ---
-
                 # IK cannot reliably converge to the correct joint configuration: the same
                 # EE position can be reached by many different joint solutions (IK is not
                 # unique). Directly teleport joints to rest pose before the success check,
