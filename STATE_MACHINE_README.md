@@ -29,7 +29,7 @@ python scripts/environments/state_machine/pick_orange.py \
     --num_envs 1 \
     --record \
     --dataset_file ./datasets/pick_orange.hdf5 \
-    --num_demos 10
+    --num_demos 1
 ```
 
 ### How It Works
