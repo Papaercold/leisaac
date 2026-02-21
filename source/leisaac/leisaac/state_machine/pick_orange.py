@@ -70,7 +70,7 @@ class PickOrangeStateMachine(StateMachineBase):
         sm.reset()
     """
 
-    MAX_STEPS_PER_ORANGE: int = 920
+    MAX_STEPS_PER_ORANGE: int = 980
 
     def __init__(self, num_oranges: int = 3, rest_ee_pos_world: torch.Tensor | None = None) -> None:
         self._num_oranges = num_oranges
@@ -133,21 +133,23 @@ class PickOrangeStateMachine(StateMachineBase):
         # --- Phase dispatch ---
         if self._orange_now == 1 and step < _APPROACH_STEPS:
             target_pos_w, gripper_cmd = self._phase_approach_hover(orange_pos_w, num_envs, device)
-        elif step < 240:
-            target_pos_w, gripper_cmd = self._phase_hover_above_orange(orange_pos_w, num_envs, device)
+        elif step < 180:
+            target_pos_w, gripper_cmd = self._phase_move_above_orange(orange_pos_w, num_envs, device)
         elif step < 300:
-            target_pos_w, gripper_cmd = self._phase_lower_to_orange(orange_pos_w, num_envs, device)
+            target_pos_w, gripper_cmd = self._phase_hover_above_orange(orange_pos_w, num_envs, device)
         elif step < 360:
+            target_pos_w, gripper_cmd = self._phase_lower_to_orange(orange_pos_w, num_envs, device)
+        elif step < 420:
             target_pos_w, gripper_cmd = self._phase_grasp(orange_pos_w, num_envs, device)
-        elif step < 440:
+        elif step < 500:
             target_pos_w, gripper_cmd = self._phase_lift_orange(orange_pos_w, num_envs, device)
-        elif step < 490:
+        elif step < 550:
             target_pos_w, gripper_cmd = self._phase_move_above_plate(plate_pos_w, num_envs, device)
-        elif step < 540:
+        elif step < 600:
             target_pos_w, gripper_cmd = self._phase_lower_to_plate(plate_pos_w, num_envs, device)
-        elif step < 580:
+        elif step < 640:
             target_pos_w, gripper_cmd = self._phase_release(plate_pos_w, num_envs, device)
-        elif step < 620:
+        elif step < 680:
             target_pos_w, gripper_cmd = self._phase_lift_gripper(plate_pos_w, num_envs, device)
         else:
             target_pos_w, gripper_cmd = self._phase_return_home(num_envs, device)
@@ -185,6 +187,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         hover_target = orange_pos_w.clone()
         hover_target[:, 0] -= 0.03
+        hover_target[:, 1] -= 0.005
         hover_target[:, 2] += 0.1 + _GRIPPER_OFFSET
 
         alpha = self._step_count / _APPROACH_STEPS  # 0.0 at step 0, 1.0 at step _APPROACH_STEPS
@@ -196,10 +199,35 @@ class PickOrangeStateMachine(StateMachineBase):
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
         return target_pos_w, gripper_cmd
 
+    def _phase_move_above_orange(
+        self, orange_pos_w: torch.Tensor, num_envs: int, device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Steps 120–179 (orange 1) / 0–179 (oranges 2-3): move to a high position directly above the orange.
+
+        This phase brings the gripper to a clear altitude above the orange before
+        the finer hover and lower phases.  It is the first phase executed for
+        oranges 2 and 3 (where the robot transits from the plate side), and runs
+        immediately after ``_phase_approach_hover`` for the first orange.
+
+        Args:
+            orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
+            num_envs: Number of parallel environments.
+            device: Torch device string.
+
+        Returns:
+            ``(target_pos_w, gripper_cmd)`` – target world position and open gripper command.
+        """
+        target_pos_w = orange_pos_w.clone()
+        target_pos_w[:, 0] -= 0.03
+        target_pos_w[:, 1] -= 0.005
+        target_pos_w[:, 2] += 0.15 + _GRIPPER_OFFSET
+        gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
+        return target_pos_w, gripper_cmd
+
     def _phase_hover_above_orange(
         self, orange_pos_w: torch.Tensor, num_envs: int, device: str
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Steps 0–119: move the gripper to a hover position above the orange.
+        """Steps 180–299: hold the gripper at a hover position above the orange.
 
         Args:
             orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
@@ -211,6 +239,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
+        target_pos_w[:, 1] -= 0.005
         target_pos_w[:, 2] += 0.1 + _GRIPPER_OFFSET
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
         return target_pos_w, gripper_cmd
@@ -218,7 +247,7 @@ class PickOrangeStateMachine(StateMachineBase):
     def _phase_lower_to_orange(
         self, orange_pos_w: torch.Tensor, num_envs: int, device: str
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Steps 120–149: lower the gripper down to grasp height over the orange.
+        """Steps 300–359: lower the gripper down to grasp height over the orange.
 
         Args:
             orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
@@ -230,6 +259,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
+        target_pos_w[:, 1] -= 0.005
         target_pos_w[:, 2] += _GRIPPER_OFFSET
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
         return target_pos_w, gripper_cmd
@@ -237,7 +267,7 @@ class PickOrangeStateMachine(StateMachineBase):
     def _phase_grasp(
         self, orange_pos_w: torch.Tensor, num_envs: int, device: str
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Steps 150–179: close the gripper to grasp the orange.
+        """Steps 360–419: close the gripper to grasp the orange.
 
         Args:
             orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
@@ -249,6 +279,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
+        target_pos_w[:, 1] -= 0.005
         target_pos_w[:, 2] += _GRIPPER_OFFSET
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_CLOSE, device=device)
         return target_pos_w, gripper_cmd
@@ -256,7 +287,7 @@ class PickOrangeStateMachine(StateMachineBase):
     def _phase_lift_orange(
         self, orange_pos_w: torch.Tensor, num_envs: int, device: str
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Steps 180–219: lift the grasped orange upward.
+        """Steps 420–499: lift the grasped orange upward.
 
         Args:
             orange_pos_w: Orange position in world frame, shape ``(num_envs, 3)``.
@@ -268,6 +299,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
+        target_pos_w[:, 1] -= 0.005
         target_pos_w[:, 2] += 0.25
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_CLOSE, device=device)
         return target_pos_w, gripper_cmd

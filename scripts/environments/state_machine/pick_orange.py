@@ -340,13 +340,13 @@ def main() -> None:
                     print("Start recording.")
                 start_record_state = True
             actions = sm.get_action(env)
-            # During the last orange's return home phase (orange 3, step 620-919): linearly
-            # interpolate joint positions from the configuration at step 620 to rest pose at
-            # step 919.
-            if sm.orange_now == 3 and sm.step_count >= 620:
-                if sm.step_count == 620:
+            # During the last orange's return home phase (orange 3, step 680-979): linearly
+            # interpolate joint positions from the configuration at step 680 to rest pose at
+            # step 979.
+            if sm.orange_now == 3 and sm.step_count >= 680:
+                if sm.step_count == 680:
                     _home_start_pos = _robot.data.joint_pos.clone()
-                _alpha = (sm.step_count - 620) / 299.0  # 0.0 at step 620, 1.0 at step 919
+                _alpha = (sm.step_count - 680) / 299.0  # 0.0 at step 680, 1.0 at step 979
                 _blended_pos = _home_start_pos + (_rest_joint_pos - _home_start_pos) * _alpha
                 _robot.write_joint_state_to_sim(
                     position=_blended_pos,
@@ -355,14 +355,14 @@ def main() -> None:
             _orange_before_step = sm.orange_now
             env.step(actions)
             sm.advance()
-            # For oranges 1 and 2: skip the return home phase (steps 620-919) without
+            # For oranges 1 and 2: skip the return home phase (steps 680-979) without
             # simulation — there is no point returning home when the next orange follows
             # immediately. Fast-forward advance() until the orange index increments.
             if (
                 not sm.is_episode_done
                 and sm.orange_now == _orange_before_step
                 and sm.orange_now < 3
-                and sm.step_count >= 620
+                and sm.step_count >= 680
             ):
                 while sm.orange_now == _orange_before_step and not sm.is_episode_done:
                     sm.advance()
