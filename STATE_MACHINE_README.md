@@ -27,6 +27,8 @@ source/leisaac/leisaac/state_machine/
 python scripts/environments/state_machine/pick_orange.py \
     --task LeIsaac-SO101-PickOrange-v0 \
     --num_envs 1 \
+    --device cuda \
+    --enable_cameras \
     --record \
     --dataset_file ./datasets/pick_orange.hdf5 \
     --num_demos 1
