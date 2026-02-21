@@ -124,9 +124,6 @@ class PickOrangeStateMachine(StateMachineBase):
 
         # Capture initial EE position from robot body data at episode start (step 0, orange 1).
         # body_pos_w is always valid after env.reset() and does not suffer from stale sensor data.
-        robot = env.scene["robot"]
-        robot.write_joint_damping_to_sim(damping=10.0)
-        
         if self._orange_now == 1 and step == 0:
             self._initial_ee_pos = env.scene["robot"].data.body_pos_w[:, -1, :].clone()
             # 或者直接设置 drive params（依据你 robot API）
