@@ -1,10 +1,7 @@
 #!/bin/bash
-# 默认参数（可覆盖）
 TASK_NAME=${1:-LeIsaac-SO101-PickOrange-v0}
 DATASET=${2:-./datasets/dataset_test.hdf5}
-EPISODE_ID=${3:-1}
-
-cd /media/zihan-gao/leisaac || exit
+EPISODE_ID=${3:-3}
 
 python scripts/environments/state_machine/replay.py \
     --dataset_file=${DATASET} \

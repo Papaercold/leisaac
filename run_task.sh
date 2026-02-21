@@ -1,9 +1,6 @@
 #!/bin/bash
-
 TASK_NAME=${1:-LeIsaac-SO101-PickOrange-v0}
 DATASET=${2:-./datasets/dataset_test.hdf5}
-
-cd /media/zihan-gao/leisaac || exit
 
 python scripts/environments/state_machine/pick_orange.py \
     --dataset_file=${DATASET} \
