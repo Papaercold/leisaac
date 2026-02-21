@@ -34,6 +34,8 @@ python scripts/environments/state_machine/pick_orange.py \
     --num_demos 1
 ```
 
+> **Note — Grasp Success Rate:** In the default scene configuration the oranges are placed relatively far from the robot's end-effector, which results in a low grasp success rate. Adjusting the orange spawn positions in the task's environment config file (e.g. moving them closer to the robot base) significantly improves the success rate.
+
 ### How It Works
 
 ```
@@ -157,57 +159,7 @@ robot.write_joint_damping_to_sim(damping=10.0)
 
 This must also be applied during **replay** to match recording conditions. The state-machine replay script (`scripts/environments/state_machine/replay.py`) calls `apply_damping(env, task_type)` before every `env.step()`.
 
-### 3. FK Calibration for Rest Pose
-
-The success check (`task_done()`) requires joints to be within `SO101_FOLLOWER_REST_POSE_RANGE` (e.g., shoulder_lift ≈ −100°, not 0°). Since IK controls EE position and cannot guarantee a specific joint configuration, the runner:
-
-1. Teleports joints to the rest pose using `write_joint_state_to_sim()` before `task_done()`.
-2. Calls `env.scene.update()` (not `env.sim.step()`) to refresh the data cache without letting the physics overwrite the teleport via stale actuator targets.
-
-```python
-robot.write_joint_state_to_sim(
-    position=_rest_joint_pos,
-    velocity=torch.zeros_like(_rest_joint_pos),
-)
-env.scene.update(dt=env.physics_dt)
-success = task_done(env, ...)
-```
-
-### 4. Return-Home Strategy
-
-After placing an orange, the robot must return to rest pose for the success check.
-
-**IK alone is insufficient:** the IK solver can reach the same end-effector position via many different joint configurations (IK non-uniqueness). Commanding the rest-pose EE position via IK from a post-placement configuration typically lands in a different joint solution.
-
-**Current approach for orange 3 (the last orange):**
-
-During steps 620–919, joint positions are linearly interpolated from the post-placement configuration to the rest pose:
-
-```python
-if sm.orange_now == 3 and sm.step_count >= 620:
-    if sm.step_count == 620:
-        _home_start_pos = _robot.data.joint_pos.clone()
-    alpha = (sm.step_count - 620) / 299.0      # 0.0 → 1.0
-    blended = _home_start_pos + (_rest_joint_pos - _home_start_pos) * alpha
-    _robot.write_joint_state_to_sim(position=blended, velocity=zeros)
-# IK actions from sm.get_action() are still passed to env.step() for recording
-env.step(actions)
-```
-
-**Replay limitation:** the recorded `actions` are 8D IK pose targets, not the blended joint positions. During replay, the IK solver starts from a different joint state and may follow a different path to the same EE target. The `processed_actions` field in the HDF5 file contains the actual IK-computed joint targets, but the current replay infrastructure uses `actions`, not `processed_actions`.
-
-**Oranges 1 and 2:** return-home is skipped entirely using `sm.advance()` without `env.step()`. This avoids wasted simulation time when the next orange follows immediately.
-
-### 5. IK Action Coordinate Frame
-
-IK targets must be expressed in the **robot base local frame**, not the world frame:
-
-```python
-diff_w        = target_pos_w - robot_base_pos_w
-target_pos_lo = quat_apply(quat_inv(robot_base_quat_w), diff_w)
-```
-
-### 6. Episode Numbering
+### 3. Episode Numbering
 
 The IsaacLab recorder saves an initial-state-only episode (`num_samples=0`) on the very first `env.reset()` call (before any steps). This becomes `demo_0`.
 

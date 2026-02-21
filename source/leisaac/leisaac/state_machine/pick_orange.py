@@ -187,7 +187,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         hover_target = orange_pos_w.clone()
         hover_target[:, 0] -= 0.03
-        hover_target[:, 1] -= 0.005
+        hover_target[:, 1] -= 0.01
         hover_target[:, 2] += 0.1 + _GRIPPER_OFFSET
 
         alpha = self._step_count / _APPROACH_STEPS  # 0.0 at step 0, 1.0 at step _APPROACH_STEPS
@@ -219,7 +219,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
-        target_pos_w[:, 1] -= 0.005
+        target_pos_w[:, 1] -= 0.01
         target_pos_w[:, 2] += 0.15 + _GRIPPER_OFFSET
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
         return target_pos_w, gripper_cmd
@@ -239,7 +239,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
-        target_pos_w[:, 1] -= 0.005
+        target_pos_w[:, 1] -= 0.01
         target_pos_w[:, 2] += 0.1 + _GRIPPER_OFFSET
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
         return target_pos_w, gripper_cmd
@@ -259,7 +259,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
-        target_pos_w[:, 1] -= 0.005
+        target_pos_w[:, 1] -= 0.01
         target_pos_w[:, 2] += _GRIPPER_OFFSET
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_OPEN, device=device)
         return target_pos_w, gripper_cmd
@@ -279,7 +279,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
-        target_pos_w[:, 1] -= 0.005
+        target_pos_w[:, 1] -= 0.01
         target_pos_w[:, 2] += _GRIPPER_OFFSET
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_CLOSE, device=device)
         return target_pos_w, gripper_cmd
@@ -299,7 +299,7 @@ class PickOrangeStateMachine(StateMachineBase):
         """
         target_pos_w = orange_pos_w.clone()
         target_pos_w[:, 0] -= 0.03
-        target_pos_w[:, 1] -= 0.005
+        target_pos_w[:, 1] -= 0.01
         target_pos_w[:, 2] += 0.25
         gripper_cmd = torch.full((num_envs, 1), _GRIPPER_CLOSE, device=device)
         return target_pos_w, gripper_cmd

@@ -34,6 +34,8 @@ python scripts/environments/state_machine/pick_orange.py \
     --num_demos 1
 ```
 
+> **注意 — 夹取成功率：** 默认场景配置中橙子离机械臂末端较远，导致夹取成功率较低。在任务的环境 cfg 文件中调整橙子的生成位置（例如将其移近机械臂底座），可以显著提升夹取成功率。
+
 ### 工作原理
 
 ```
@@ -158,57 +160,7 @@ robot.write_joint_damping_to_sim(damping=10.0)
 
 **回放时也必须应用相同阻尼**，以匹配录制条件。状态机回放脚本（`scripts/environments/state_machine/replay.py`）在每次 `env.step()` 前调用 `apply_damping(env, task_type)`。
 
-### 3. 归位 FK 校准
-
-成功判断（`task_done()`）要求关节位于 `SO101_FOLLOWER_REST_POSE_RANGE` 内（例如 shoulder_lift ≈ −100°，并非零位）。由于 IK 控制 EE 位置，无法保证特定关节构型，因此 runner 脚本在调用 `task_done()` 前：
-
-1. 用 `write_joint_state_to_sim()` 将关节传送（teleport）到 rest pose。
-2. 只调用 `env.scene.update()`（不调用 `env.sim.step()`），仅刷新数据缓存，避免物理引擎用过期的 actuator 目标把 teleport 撤销。
-
-```python
-robot.write_joint_state_to_sim(
-    position=_rest_joint_pos,
-    velocity=torch.zeros_like(_rest_joint_pos),
-)
-env.scene.update(dt=env.physics_dt)
-success = task_done(env, ...)
-```
-
-### 4. 归位策略
-
-放置橘子后，机械臂需要返回 rest pose 才能通过成功判断。
-
-**IK 单独归位不可靠：** 对同一 EE 目标位置，IK 求解器可能找到多个关节解（IK 非唯一性）。从放置后的构型出发，命令 rest pose EE 位置，IK 通常会落入与 rest pose 不同的关节解。
-
-**第三个橘子（最后一个）的当前方案：**
-
-在步骤 620–919 间，关节位置从放置后构型线性插值到 rest pose：
-
-```python
-if sm.orange_now == 3 and sm.step_count >= 620:
-    if sm.step_count == 620:
-        _home_start_pos = _robot.data.joint_pos.clone()
-    alpha = (sm.step_count - 620) / 299.0      # 0.0 → 1.0
-    blended = _home_start_pos + (_rest_joint_pos - _home_start_pos) * alpha
-    _robot.write_joint_state_to_sim(position=blended, velocity=zeros)
-# sm.get_action() 的 IK 动作仍然传入 env.step()，用于录制
-env.step(actions)
-```
-
-**回放局限性：** 录制的 `actions` 是 8D IK pose 目标，而非插值后的关节位置。回放时 IK 求解器从不同的关节起点出发，可能走向不同的路径。HDF5 中的 `processed_actions` 字段存有 IK 实际求解的关节目标位置，但当前回放基础设施使用的是 `actions` 而非 `processed_actions`。
-
-**第一、二个橘子：** 直接用 `sm.advance()` 跳过归位阶段（不调用 `env.step()`），避免在下一个橘子紧随其后时浪费仿真时间。
-
-### 5. IK 动作坐标系
-
-IK 目标必须表示在**机械臂 base 局部坐标系**下，而非世界坐标系：
-
-```python
-diff_w        = target_pos_w - robot_base_pos_w
-target_pos_lo = quat_apply(quat_inv(robot_base_quat_w), diff_w)
-```
-
-### 6. Episode 编号规则
+### 3. Episode 编号规则
 
 IsaacLab 录制器在第一次 `env.reset()` 调用时（此时还未执行任何步骤）会保存一个仅含初始状态的 episode（`num_samples=0`），即 `demo_0`。
 
