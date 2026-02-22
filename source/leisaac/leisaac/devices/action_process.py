@@ -116,7 +116,7 @@ def init_action_cfg(action_cfg, device):
             asset_name=asset,
             joint_names=["gripper"],
             open_command_expr={"gripper": 1.0},
-            close_command_expr={"gripper": 0.4},
+            close_command_expr={"gripper": 0.01},
         )
         action_cfg.left_arm_action = _ik_cfg("left_arm")
         action_cfg.left_gripper_action = _grip_cfg("left_arm")
